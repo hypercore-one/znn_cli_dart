@@ -7,12 +7,15 @@ void pillarMenu() {
   print('    pillar.list');
   print(
       '    pillar.register name producerAddress rewardAddress giveBlockRewardPercentage giveDelegateRewardPercentage');
+  print(
+      '    pillar.registerLegacy name producerAddress rewardAddress giveBlockRewardPercentage giveDelegateRewardPercentage legacyPillarPubKey legacyPillarSignature');
   print('    pillar.revoke name');
   print('    pillar.delegate name');
   print('    pillar.undelegate');
   print('    pillar.collect');
-  print('    pillar.depositQsr');
+  print('    pillar.depositQsr amount');
   print('    pillar.withdrawQsr');
+  print('    pillar.getDepositedQsr');
 }
 
 Future<void> pillarFunctions() async {
@@ -25,6 +28,11 @@ Future<void> pillarFunctions() async {
     case 'register':
       verbose ? print('Description: Register pillar') : null;
       await _register();
+      return;
+
+    case 'registerLegacy':
+      verbose ? print('Description: Register a legacy pillar') : null;
+      await _registerLegacy();
       return;
 
     case 'revoke':
@@ -58,6 +66,14 @@ Future<void> pillarFunctions() async {
               'Description: Withdraw deposited QSR from the pillar contract')
           : null;
       await _withdrawQsr();
+      return;
+
+    case 'getDepositedQsr':
+      verbose
+          ? print(
+              'Description: Get the amount of QSR deposited in the pillar contract')
+          : null;
+      await _getDepositedQsr();
       return;
 
     default:
@@ -127,10 +143,80 @@ Future<void> _register() async {
         .send(znnClient.embedded.pillar.depositQsr(qsrAmount - depositedQsr));
   }
   print('Registering Pillar ...');
-  await send(znnClient.embedded.pillar.register(
+  await send(znnClient.embedded.pillar.register(newName, producerAddress,
+      rewardAddress, giveBlockRewardPercentage, giveDelegateRewardPercentage));
+  print('Done');
+  print(
+      'Check after 2 momentums if the Pillar was successfully registered using ${green('pillar.list')} command');
+}
+
+Future<void> _registerLegacy() async {
+  if (args.length != 8) {
+    print('Incorrect number of arguments. Expected:');
+    print(
+        'pillar.register name producerAddress rewardAddress giveBlockRewardPercentage giveDelegateRewardPercentage legacyPillarPubKey legacyPillarSignature');
+    return;
+  }
+
+  final giveBlockRewardPercentage = int.parse(args[4]);
+  final giveDelegateRewardPercentage = int.parse(args[5]);
+
+  if (giveBlockRewardPercentage < 0 ||
+      giveBlockRewardPercentage > 100 ||
+      giveDelegateRewardPercentage < 0 ||
+      giveDelegateRewardPercentage > 100) {
+    print('Invalid reward percentages');
+    return;
+  }
+
+  final balance = await znnClient.ledger.getAccountInfoByAddress(address);
+  final depositedQsr = await znnClient.embedded.pillar.getDepositedQsr(address);
+  if (balance.znn()! < pillarRegisterZnnAmount) {
+    print('Cannot register legacy Pillar with address ${address.toString()}');
+    print(
+        'Required ${AmountUtils.addDecimals(pillarRegisterZnnAmount, coinDecimals)} ${green('ZNN')}');
+    print(
+        'Available ${AmountUtils.addDecimals(balance.znn()!, coinDecimals)} ${green('ZNN')}');
+    return;
+  }
+
+  if (depositedQsr < pillarRegisterQsrAmount) {
+    print('Cannot register legacy Pillar with address ${address.toString()}');
+    print(
+        'Required QSR deposit ${AmountUtils.addDecimals(pillarRegisterQsrAmount, coinDecimals)} ${blue('QSR')}');
+    print(
+        'Deposited QSR ${AmountUtils.addDecimals(depositedQsr, coinDecimals)} ${blue('QSR')}');
+    print(
+        'Use the pillar.depositQsr command to deposit the required ${blue('QSR')} amount');
+    return;
+  }
+
+  String newName = args[1];
+  bool ok = (await znnClient.embedded.pillar.checkNameAvailability(newName));
+  while (!ok) {
+    newName = ask(
+        'This Pillar name is already reserved. Please choose another name for the Pillar');
+    ok = (await znnClient.embedded.pillar.checkNameAvailability(newName));
+  }
+
+  print(
+      'Creating a new ${green('Pillar')} will burn the deposited ${blue('QSR')} required for the legacy Pillar slot\n');
+  print('Pillar name: $newName');
+  print('Pillar address: ${address.toString()}');
+  print('Producer address: ${args[2]}');
+  print('Reward address: ${args[3]}');
+  print('Give block reward percentage: $giveBlockRewardPercentage%');
+  print('Give delegate reward percentage: $giveDelegateRewardPercentage%\n');
+
+  if (!confirm('Do you want to proceed?', defaultValue: false)) return;
+
+  print('Registering legacy Pillar ...');
+  await znnClient.send(znnClient.embedded.pillar.registerLegacy(
       newName,
-      producerAddress,
-      rewardAddress,
+      Address.parse(args[2]),
+      Address.parse(args[3]),
+      args[6],
+      args[7],
       giveBlockRewardPercentage,
       giveDelegateRewardPercentage));
   print('Done');
@@ -192,29 +278,27 @@ Future<void> _collect() async {
 }
 
 Future<void> _depositQsr() async {
-  AccountInfo balance = await znnClient.ledger.getAccountInfoByAddress(address);
-  BigInt qsrAmount = await znnClient.embedded.pillar.getQsrRegistrationCost();
-  BigInt depositedQsr =
-      await znnClient.embedded.pillar.getDepositedQsr(address);
-
-  print(
-      'You have ${AmountUtils.addDecimals(depositedQsr, coinDecimals)} / ${AmountUtils.addDecimals(qsrAmount, coinDecimals)} ${blue('QSR')} deposited for the Pillar registration');
-
-  if (balance.qsr()! < qsrAmount) {
-    print(
-        'Required ${AmountUtils.addDecimals(qsrAmount, coinDecimals)} ${blue('QSR')}');
-    print(
-        'Available ${AmountUtils.addDecimals(balance.qsr()!, coinDecimals)} ${blue('QSR')}');
+  if (args.length != 2) {
+    print('Incorrect number of arguments. Expected:');
+    print('pillar.depositQsr amount');
     return;
   }
-
-  if (depositedQsr < qsrAmount) {
-    print(
-        'Depositing ${AmountUtils.addDecimals(qsrAmount - depositedQsr, coinDecimals)} ${blue('QSR')} for the Pillar registration');
-    await znnClient
-        .send(znnClient.embedded.pillar.depositQsr(qsrAmount - depositedQsr));
+  //BigInt amountToDeposit = (BigInt.parse(args[1]) * oneQsr).round();
+  BigInt amountToDeposit = AmountUtils.extractDecimals(args[1], coinDecimals);
+  if (amountToDeposit <= BigInt.zero) {
+    print('Deposit amount must be greater than zero');
+    return;
   }
+  final balance = await znnClient.ledger.getAccountInfoByAddress(address);
+  if (balance.qsr()! < amountToDeposit) {
+    print(red('Not enough QSR'));
+    return;
+  }
+  print(
+      'Depositing ${AmountUtils.addDecimals(amountToDeposit, coinDecimals)} ${blue('QSR')} ...');
+  await znnClient.send(znnClient.embedded.pillar.depositQsr(amountToDeposit));
   print('Done');
+  return;
 }
 
 Future<void> _withdrawQsr() async {
@@ -228,4 +312,16 @@ Future<void> _withdrawQsr() async {
       'Withdrawing ${AmountUtils.addDecimals(depositedQsr, coinDecimals)} ${blue('QSR')} ...');
   await send(znnClient.embedded.pillar.withdrawQsr());
   print('Done');
+}
+
+Future<void> _getDepositedQsr() async {
+  if (args.length != 1) {
+    print('Incorrect number of arguments. Expected:');
+    print('pillar.getDepositedQsr');
+    return;
+  }
+  BigInt? depositedQsr =
+      await znnClient.embedded.pillar.getDepositedQsr(address);
+  print(
+      '${AmountUtils.addDecimals(depositedQsr, coinDecimals)} ${blue('QSR')} deposited for address $address');
 }
