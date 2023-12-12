@@ -283,7 +283,7 @@ Future<void> _depositQsr() async {
     print('pillar.depositQsr amount');
     return;
   }
-  //BigInt amountToDeposit = (BigInt.parse(args[1]) * oneQsr).round();
+
   BigInt amountToDeposit = AmountUtils.extractDecimals(args[1], coinDecimals);
   if (amountToDeposit <= BigInt.zero) {
     print('Deposit amount must be greater than zero');
